@@ -1,0 +1,13 @@
+django
+langchain
+langchain-community
+langchainhub
+pypdf
+qdrant-client
+tiktoken
+groq
+django-htmx
+openai
+django-environ
+sentence-transformers
+langchain-groq
