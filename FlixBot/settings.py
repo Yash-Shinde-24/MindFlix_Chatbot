@@ -11,19 +11,29 @@ https://docs.djangoproject.com/en/5.2/ref/settings/
 """
 
 from pathlib import Path
+import environ # Add this import
+
+# Initialize environment variables
+env = environ.Env(
+    # set casting, default value
+    DEBUG=(bool, False)
+)
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
+
+# Take environment variables from .env file
+environ.Env.read_env(BASE_DIR / '.env')
 
 
 # Quick-start development settings - unsuitable for production
 # See https://docs.djangoproject.com/en/5.2/howto/deployment/checklist/
 
 # SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = 'django-insecure-==sg3n8ekqsa7lmhecmgo0&s9oki99ae@mfzl5s3ba0d_@b3fq'
+SECRET_KEY = env('SECRET_KEY') # Read from .env
 
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = True
+DEBUG = env('DEBUG') # Read from .env
 
 ALLOWED_HOSTS = []
 
@@ -37,6 +47,8 @@ INSTALLED_APPS = [
     'django.contrib.sessions',
     'django.contrib.messages',
     'django.contrib.staticfiles',
+    'agent', # Add the agent app
+    'django_htmx', # Add django-htmx
 ]
 
 MIDDLEWARE = [
@@ -47,6 +59,7 @@ MIDDLEWARE = [
     'django.contrib.auth.middleware.AuthenticationMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
+    'django_htmx.middleware.HtmxMiddleware', # Add htmx middleware
 ]
 
 ROOT_URLCONF = 'FlixBot.urls'
@@ -54,7 +67,7 @@ ROOT_URLCONF = 'FlixBot.urls'
 TEMPLATES = [
     {
         'BACKEND': 'django.template.backends.django.DjangoTemplates',
-        'DIRS': [],
+        'DIRS': [BASE_DIR / 'templates', BASE_DIR / 'agent' / 'templates'], # Add project-level templates dir if needed later
         'APP_DIRS': True,
         'OPTIONS': {
             'context_processors': [
@@ -115,8 +128,17 @@ USE_TZ = True
 # https://docs.djangoproject.com/en/5.2/howto/static-files/
 
 STATIC_URL = 'static/'
+# Add this line if you plan to have project-level static files
+# STATICFILES_DIRS = [BASE_DIR / "static"]
 
 # Default primary key field type
 # https://docs.djangoproject.com/en/5.2/ref/settings/#default-auto-field
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
+
+# Groq API Key from environment
+GROQ_API_KEY = env('GROQ_API_KEY', default='')
+
+STATICFILES_DIRS = [
+    Path(BASE_DIR) / "agent" / "static",
+]
