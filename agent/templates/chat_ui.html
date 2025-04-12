@@ -1,0 +1,245 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>FlixBot Chat</title>
+    <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet">
+    <style>
+        /* Custom scrollbar for webkit browsers */
+        #chat-window::-webkit-scrollbar {
+            width: 8px;
+        }
+        #chat-window::-webkit-scrollbar-track {
+            background: #f1f1f1;
+            border-radius: 10px;
+        }
+        #chat-window::-webkit-scrollbar-thumb {
+            background: #888;
+            border-radius: 10px;
+        }
+        #chat-window::-webkit-scrollbar-thumb:hover {
+            background: #555;
+        }
+        /* Basic styling for message bubbles */
+        .message-bubble {
+            padding: 0.75rem 1rem;
+            border-radius: 1rem;
+            margin-bottom: 0.5rem;
+            max-width: 75%;
+            word-wrap: break-word;
+        }
+        .user-message {
+            background-color: #DCF8C6; /* Light green */
+            align-self: flex-end;
+            border-bottom-right-radius: 0;
+        }
+        .bot-message {
+            background-color: #FFFFFF; /* White */
+            align-self: flex-start;
+            border-bottom-left-radius: 0;
+            border: 1px solid #e5e7eb; /* Light gray border */
+        }
+    </style>
+    <script>
+      let chatHistory = []; // Initialize chat history array (stores {role: 'user'/'assistant', content: 'message'})
+
+      async function sendChatMessage() {
+        const promptInput = document.getElementById('prompt-input');
+        const chatWindow = document.getElementById('chat-window');
+        const sendButton = document.getElementById('send-button');
+        const promptValue = promptInput.value.trim();
+
+        if (!promptValue) {
+          return; // Don't send empty messages
+        }
+
+        // Disable input and button during request
+        promptInput.disabled = true;
+        sendButton.disabled = true;
+        sendButton.classList.add('opacity-50', 'cursor-not-allowed');
+
+        // Display user message
+        const userMessageContainer = document.createElement('div');
+        userMessageContainer.classList.add('flex', 'justify-end', 'mb-2');
+        const userMessageDiv = document.createElement('div');
+        userMessageDiv.textContent = promptValue;
+        userMessageDiv.classList.add('message-bubble', 'user-message');
+        userMessageContainer.appendChild(userMessageDiv);
+        chatWindow.appendChild(userMessageContainer);
+        chatWindow.scrollTop = chatWindow.scrollHeight;
+
+        // Add user message to history
+        // LangChain expects history in a specific format, often alternating Human/AI or User/Assistant messages.
+        // Adjust the role based on what your LangChain setup expects (e.g., HumanMessage, AIMessage).
+        // Here, using simple 'user' and 'assistant' roles.
+        chatHistory.push({ role: "user", content: promptValue });
+        console.log("Updated History (User):", JSON.stringify(chatHistory)); // For debugging
+
+        promptInput.value = ''; // Clear input field
+
+        let botMessageContainer = null;
+        let botMessageDiv = null;
+        let fullBotResponse = ''; // To accumulate the full bot response
+
+        try {
+          const response = await fetch('/api/chat/', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+                prompt: promptValue,
+                history: chatHistory // Send the current history
+            })
+          });
+
+          console.log('Response Status:', response.status);
+
+          if (!response.ok || !response.body) {
+            const errorText = await response.text();
+            console.error('API request failed:', response.status, response.statusText, errorText);
+            const errorDiv = document.createElement('div');
+            errorDiv.textContent = `Error: ${response.status} - ${response.statusText || 'Failed to fetch'}. ${errorText || ''}`;
+            errorDiv.classList.add('text-red-500', 'text-center', 'my-2', 'text-sm');
+            chatWindow.appendChild(errorDiv);
+            chatWindow.scrollTop = chatWindow.scrollHeight;
+            // Remove the last user message from history if the request failed
+            chatHistory.pop();
+            console.log("History after failed request:", JSON.stringify(chatHistory));
+            return; // Exit after handling error
+          }
+
+          // --- Handling streaming response ---
+          const reader = response.body.getReader();
+          const decoder = new TextDecoder();
+
+          while (true) {
+            const { value, done } = await reader.read();
+            if (done) {
+                console.log('Stream finished.');
+                // Add the complete bot response to history after stream ends
+                if (fullBotResponse) {
+                    chatHistory.push({ role: "assistant", content: fullBotResponse });
+                    console.log("Updated History (Assistant):", JSON.stringify(chatHistory)); // For debugging
+                }
+                break; // Exit loop when stream is done
+            }
+
+            const chunk = decoder.decode(value, { stream: true });
+            const lines = chunk.split('\n\n');
+
+            for (const line of lines) {
+                if (line.startsWith('data: ')) {
+                    const dataPart = line.substring(6).trim();
+                    if (dataPart === '[DONE]') {
+                        console.log('Received [DONE] marker.');
+                        // Don't add to history here, wait for the loop to finish
+                        continue;
+                    }
+                    if (!dataPart) continue; // Skip empty data lines
+
+                    try {
+                        const jsonData = JSON.parse(dataPart);
+                        if (jsonData.chunk) {
+                            if (!botMessageContainer) {
+                                // Create bot message bubble only when the first chunk arrives
+                                botMessageContainer = document.createElement('div');
+                                botMessageContainer.classList.add('flex', 'justify-start', 'mb-2');
+                                botMessageDiv = document.createElement('div');
+                                botMessageDiv.classList.add('message-bubble', 'bot-message');
+                                botMessageContainer.appendChild(botMessageDiv);
+                                chatWindow.appendChild(botMessageContainer);
+                            }
+                            botMessageDiv.textContent += jsonData.chunk;
+                            fullBotResponse += jsonData.chunk; // Accumulate response
+                            chatWindow.scrollTop = chatWindow.scrollHeight;
+                        } else if (jsonData.error) {
+                             console.error('Error from stream:', jsonData.error);
+                             const errorDiv = document.createElement('div');
+                             errorDiv.textContent = `Bot Error: ${jsonData.error}`;
+                             errorDiv.classList.add('text-red-500', 'text-center', 'my-2', 'text-sm');
+                             chatWindow.appendChild(errorDiv);
+                             chatWindow.scrollTop = chatWindow.scrollHeight;
+                             // Remove the last user message from history if the bot returned an error
+                             chatHistory.pop();
+                             console.log("History after bot error:", JSON.stringify(chatHistory));
+                        }
+                    } catch (e) {
+                        console.error('Error parsing JSON chunk:', e, 'Chunk:', dataPart);
+                        // Optionally display a parsing error message
+                    }
+                }
+            }
+          }
+          // --- End of streaming handling ---
+
+        } catch (error) {
+          console.error('Error sending message:', error);
+          const errorDiv = document.createElement('div');
+          errorDiv.textContent = `Network Error: ${error.message}`;
+          errorDiv.classList.add('text-red-500', 'text-center', 'my-2', 'text-sm');
+          chatWindow.appendChild(errorDiv);
+          chatWindow.scrollTop = chatWindow.scrollHeight;
+          // Remove the last user message from history on network error
+          chatHistory.pop();
+          console.log("History after network error:", JSON.stringify(chatHistory));
+        } finally {
+            // Re-enable input and button
+            promptInput.disabled = false;
+            sendButton.disabled = false;
+            sendButton.classList.remove('opacity-50', 'cursor-not-allowed');
+            promptInput.focus(); // Set focus back to input
+        }
+      }
+
+      // Add event listener for Enter key
+      document.addEventListener('DOMContentLoaded', (event) => {
+        const promptInput = document.getElementById('prompt-input');
+        promptInput.addEventListener('keypress', function (e) {
+            if (e.key === 'Enter' && !e.shiftKey) { // Send on Enter, allow Shift+Enter for newline
+                e.preventDefault();
+                sendChatMessage();
+            }
+        });
+        // Add initial bot message to history if needed (optional)
+        // const initialBotMessage = document.querySelector('.bot-message').textContent;
+        // if (initialBotMessage) {
+        //     chatHistory.push({ role: "assistant", content: initialBotMessage });
+        //     console.log("Initial History:", JSON.stringify(chatHistory));
+        // }
+      });
+    </script>
+</head>
+<body class="bg-gray-100">
+    <div class="flex flex-col h-screen max-w-3xl mx-auto bg-white shadow-lg">
+        <!-- Header -->
+        <header class="bg-gradient-to-r from-blue-500 to-purple-600 text-white p-4 shadow-md">
+            <h1 class="text-xl font-semibold text-center">FlixBot Assistant</h1>
+        </header>
+
+        <!-- Chat Window -->
+        <main id="chat-window" class="flex-1 p-4 overflow-y-auto space-y-4 bg-gray-50">
+            <!-- Initial Bot Message Example -->
+            <div class="flex justify-start mb-2">
+                <div class="message-bubble bot-message">
+                    Hello! How can I help you today?
+                </div>
+            </div>
+            <!-- Chat messages will be appended here -->
+        </main>
+
+        <!-- Input Area -->
+        <footer class="p-4 border-t border-gray-200 bg-white">
+            <div class="flex items-center space-x-3">
+                <input type="text" id="prompt-input" class="flex-1 appearance-none border rounded-full py-2 px-4 text-gray-700 leading-tight focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent" placeholder="Type your message...">
+                <button id="send-button" onclick="sendChatMessage()" class="bg-blue-500 hover:bg-blue-600 text-white p-2 rounded-full focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 transition duration-150 ease-in-out">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" />
+                    </svg>
+                </button>
+            </div>
+        </footer>
+    </div>
+</body>
+</html>
